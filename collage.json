@@ -1,0 +1,54 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Elagoht/collage-snippets-highlighter/main/schemas/collage-plugin-manifest.schema.json",
+  "name": "elagoht/i18n",
+  "description": "A collage plugin for translations.",
+  "repository": "https://github.com/Elagoht/collage-i18n",
+  "templateFunctions": [
+    {
+      "name": "t",
+      "signature": "t \"key\" [\"name\" value ...]",
+      "insert": "t \"${1:key}\"",
+      "doc": "The translation of `key` in the render's locale; name and value pairs fill `{name}`. Falls back to the default locale, then to the key."
+    },
+    {
+      "name": "th",
+      "signature": "th \"key\" [\"name\" value ...]",
+      "insert": "th \"${1:key}\"",
+      "doc": "`t` for a translation holding markup: the catalog's markup is trusted, the values filling it are escaped."
+    },
+    {
+      "name": "tn",
+      "signature": "tn \"key\" count [\"name\" value ...]",
+      "insert": "tn \"${1:key}\" ${2:.Count}",
+      "doc": "The plural form of `key` for `count` — `zero`, `one` or `other` — with `{count}` filled."
+    }
+  ],
+  "snippets": {
+    "collage-i18n plural": {
+      "language": "html",
+      "prefix": "ctn",
+      "body": [
+        "{{tn \"${1:key}\" ${2:.Count}}}"
+      ],
+      "description": "collage-i18n: the plural form for a count"
+    },
+    "collage-i18n translation": {
+      "language": "html",
+      "prefix": "ct",
+      "body": [
+        "{{t \"${1:key}\"}}"
+      ],
+      "description": "collage-i18n: a translation in the render's locale"
+    }
+  },
+  "config": {
+    "type": "object",
+    "description": "A collage plugin for translations.",
+    "properties": {
+      "dir": {
+        "type": "string",
+        "description": "Dir is the directory of the catalogs within FS. Default \"locales\"."
+      }
+    }
+  }
+}
