@@ -117,3 +117,39 @@ func TestEveryLocaleNeedsACatalog(t *testing.T) {
 		t.Errorf("started without a tr catalog: %d", rec.Code)
 	}
 }
+
+// TestT_TranslatesInAnAction pins framework-issue 002: i18n.T must translate in an
+// action handler, not return the key. An action runs before any render, so the
+// plugin is not in the render's shared data; Init's middleware leaves it in the
+// request context, where T now also looks.
+func TestT_TranslatesInAnAction(t *testing.T) {
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>x</p>`)}}, Root: "t"},
+		Locale:   collage.LocaleConfig{Default: "tr", Supported: []string{"tr", "en"}},
+		Security: collage.SecurityConfig{CSRFKey: []byte(strings.Repeat("k", 32))},
+		Plugins:  []collage.Plugin{i18n.New(i18n.Options{FS: catalogs})},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	var inAction string
+	act := collage.NewAction("a").WithPath("tr", "/a").WithMethods(http.MethodPost).WithoutCSRF().
+		WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
+			inAction = i18n.T(rc, "nav.home")
+			return collage.NoContent(http.StatusNoContent), nil
+		}).Build()
+	if err := app.RegisterAction(act); err != nil {
+		t.Fatalf("RegisterAction: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/a", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", rec.Code)
+	}
+	if inAction != "Ana sayfa" {
+		t.Errorf("i18n.T in an action = %q, want the tr translation %q, not the key", inAction, "Ana sayfa")
+	}
+}

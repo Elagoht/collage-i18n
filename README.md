@@ -58,11 +58,16 @@ language with more forms.
 
 ## In Go
 
-A data handler translates with `i18n.T(rc, key, pairs...)`:
+A data handler or an action handler translates with `i18n.T(rc, key, pairs...)` —
+anywhere collage hands you a `RenderContext`, in the request's locale:
 
 ```go
 title := i18n.T(rc, "post.title", "name", post.Title)
 ```
+
+In an action, this is how a flash message or a validation message is translated
+before the handler answers — `.Required().Message(i18n.T(rc, "signup.email.required"))`.
+Requires collage v0.39.0; before it, `T` returned the key in an action.
 
 ### Outside a render
 

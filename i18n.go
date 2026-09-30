@@ -37,6 +37,7 @@ import (
 	"html/template"
 	"io/fs"
 	"log/slog"
+	"net/http"
 	"path"
 	"sort"
 	"strconv"
@@ -89,7 +90,7 @@ type Plugin struct {
 func New(opts Options) *Plugin { return &Plugin{opts: opts} }
 
 func (p *Plugin) Name() string                   { return Name }
-func (p *Plugin) Version() string                { return "0.2.0" }
+func (p *Plugin) Version() string                { return "0.2.1" }
 func (p *Plugin) Shutdown(context.Context) error { return nil }
 
 // Configure adds {{t}}, {{tn}} and {{th}}.
@@ -152,8 +153,21 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	for _, missing := range gaps {
 		p.log.Warn("i18n: untranslated", "locale", missing.locale, "key", missing.key)
 	}
-	return nil
+	// Leave the plugin in every request's context, so T reaches it in an action
+	// too. An action runs before any render, so OnBeforeRender has not left the
+	// plugin in the render's shared data yet; a flash message or a validation
+	// message translated in the action handler would otherwise read back the key.
+	return host.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxPluginKey{}, p)))
+		})
+	})
 }
+
+// ctxPluginKey is where Init's middleware leaves the plugin in the request
+// context, for T to find in an action — the counterpart to pluginKey, which
+// OnBeforeRender leaves in a render's shared data.
+type ctxPluginKey struct{}
 
 // strictError lists what the catalogs differ by, the first twenty of it.
 func strictError(gaps []gap) error {
@@ -352,10 +366,26 @@ func (p *Plugin) shownInstead(g gap) string {
 func T(rc *collage.RenderContext, key string, args ...any) string { // any: a value is printed as fmt prints it
 	p, ok := collage.Get[*Plugin](rc, pluginKey)
 	if !ok {
+		// No render left the plugin in the shared data: an action, which runs
+		// before any render. Init's middleware left it in the request context.
+		p, ok = pluginFromRequest(rc)
+	}
+	if !ok {
 		return key
 	}
 	s, _ := p.translate(p.localeOf(rc), key, args, p.recorder(rc))
 	return s
+}
+
+// pluginFromRequest finds the plugin in rc's request context, where Init's
+// middleware leaves it. It is how T reaches the plugin outside a render — in an
+// action handler, which collage hands a RenderContext but runs before any render.
+func pluginFromRequest(rc *collage.RenderContext) (*Plugin, bool) {
+	if rc == nil || rc.Request == nil {
+		return nil, false
+	}
+	p, ok := rc.Request.Context().Value(ctxPluginKey{}).(*Plugin)
+	return p, ok
 }
 
 // pluginKey is where OnBeforeRender leaves the plugin for T.
