@@ -24,6 +24,9 @@
 // the locale's catalog lacks falls back to the default locale's, then to the key
 // itself, and is reported where collage reports findings: over the page in
 // development, in a static build's report.
+//
+// Outside a render — an email, a job — Plugin.In(locale) returns a Translator
+// with the same rules, whose misses are logged.
 package i18n
 
 import (
@@ -57,6 +60,11 @@ type Options struct {
 	// "other" for the rest, which is right for English and Turkish and wrong for
 	// Arabic or Polish; give a function of your own for those.
 	Plural func(locale string, n int) string `json:"-"`
+	// Strict refuses to start while the catalogs differ: a key one locale has and
+	// another lacks. Without it the difference is logged at startup and listed in
+	// a static build's report, and the page falls back to the default locale's
+	// text, or to the key itself.
+	Strict bool `json:"strict"`
 }
 
 // Plugin serves translations.
@@ -70,6 +78,10 @@ type Plugin struct {
 
 	mu       sync.RWMutex
 	catalogs map[string]map[string]string
+
+	// What a Translator has logged, so each missing key is logged once.
+	logged      sync.Map
+	earlyLogged sync.Once
 }
 
 // New returns a plugin with opts as its starting point, which the application's
@@ -77,7 +89,7 @@ type Plugin struct {
 func New(opts Options) *Plugin { return &Plugin{opts: opts} }
 
 func (p *Plugin) Name() string                   { return Name }
-func (p *Plugin) Version() string                { return "0.1.2" }
+func (p *Plugin) Version() string                { return "0.2.0" }
 func (p *Plugin) Shutdown(context.Context) error { return nil }
 
 // Configure adds {{t}}, {{tn}} and {{th}}.
@@ -95,13 +107,19 @@ func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
 	}
 	for name, fn := range map[string]func(rc *collage.RenderContext) any{ // any: html/template.FuncMap's own value type
 		"t": func(rc *collage.RenderContext) any { // any: as above
-			return func(key string, args ...any) (string, error) { return p.translate(rc, key, args) } // any: a template passes what it has
+			return func(key string, args ...any) (string, error) {
+				return p.translate(p.localeOf(rc), key, args, p.recorder(rc))
+			} // any: a template passes what it has
 		},
 		"th": func(rc *collage.RenderContext) any { // any: as above
-			return func(key string, args ...any) (template.HTML, error) { return p.translateHTML(rc, key, args) } // any: as above
+			return func(key string, args ...any) (template.HTML, error) { // any: as above
+				return p.translateHTML(p.localeOf(rc), key, args, p.recorder(rc))
+			}
 		},
 		"tn": func(rc *collage.RenderContext) any { // any: as above
-			return func(key string, n int, args ...any) (string, error) { return p.plural(rc, key, n, args) } // any: as above
+			return func(key string, n int, args ...any) (string, error) { // any: as above
+				return p.plural(p.localeOf(rc), key, n, args, p.recorder(rc))
+			}
 		},
 	} {
 		if err := host.AddRenderFunc(name, fn); err != nil {
@@ -116,16 +134,39 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	if p.opts.FS == nil {
 		return fmt.Errorf("i18n: register the plugin in Config.Plugins, where Configure runs")
 	}
-	p.defaultLocale, p.locales = host.Locales()
+	defaultLocale, locales := host.Locales()
+	p.mu.Lock()
+	p.defaultLocale, p.locales = defaultLocale, locales
+	p.mu.Unlock()
 	catalogs, err := p.load()
 	if err != nil {
 		return err
 	}
+	p.mu.Lock()
 	p.catalogs = catalogs
-	for _, missing := range p.untranslated() {
+	p.mu.Unlock()
+	gaps := p.untranslated()
+	if p.opts.Strict && len(gaps) > 0 {
+		return strictError(gaps)
+	}
+	for _, missing := range gaps {
 		p.log.Warn("i18n: untranslated", "locale", missing.locale, "key", missing.key)
 	}
 	return nil
+}
+
+// strictError lists what the catalogs differ by, the first twenty of it.
+func strictError(gaps []gap) error {
+	const shown = 20
+	lines := make([]string, 0, shown+1)
+	for i, g := range gaps {
+		if i == shown {
+			lines = append(lines, fmt.Sprintf("and %d more", len(gaps)-shown))
+			break
+		}
+		lines = append(lines, fmt.Sprintf("%q has no %s translation", g.key, g.locale))
+	}
+	return fmt.Errorf("i18n: the catalogs differ, and Options.Strict is set: %s", strings.Join(lines, "; "))
 }
 
 // load reads every locale's catalog.
@@ -158,6 +199,11 @@ func flatten(prefix string, tree map[string]any, out map[string]string) error { 
 		}
 		switch v := v.(type) {
 		case string:
+			// {"nav.home": …} and {"nav": {"home": …}} are one key. Keeping either
+			// would leave which text is shown to the order a map is walked in.
+			if _, taken := out[key]; taken {
+				return fmt.Errorf("key %q is written twice, once with dots and once nested", key)
+			}
 			out[key] = v
 		case map[string]any: // any: as in load
 			if err := flatten(key, v, out); err != nil {
@@ -172,17 +218,23 @@ func flatten(prefix string, tree map[string]any, out map[string]string) error { 
 
 type gap struct{ locale, key string }
 
-// untranslated lists the keys the default catalog has and another lacks.
+// untranslated lists the keys one locale's catalog has and another's lacks, in
+// either direction: a key the default catalog lacks leaves its pages showing the
+// key itself.
 func (p *Plugin) untranslated() []gap {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	all := make(map[string]bool)
+	for _, catalog := range p.catalogs {
+		for key := range catalog {
+			all[key] = true
+		}
+	}
 	var gaps []gap
 	for _, locale := range p.locales {
-		if locale == p.defaultLocale {
-			continue
-		}
-		for key := range p.catalogs[p.defaultLocale] {
-			if _, ok := p.catalogs[locale][key]; !ok {
+		forms := p.formsOf(locale)
+		for key := range all {
+			if _, ok := p.catalogs[locale][key]; !ok && p.needs(locale, key, forms) {
 				gaps = append(gaps, gap{locale, key})
 			}
 		}
@@ -194,6 +246,38 @@ func (p *Plugin) untranslated() []gap {
 		return gaps[i].key < gaps[j].key
 	})
 	return gaps
+}
+
+// pluralForms are the forms a plural key can end in.
+var pluralForms = map[string]bool{"zero": true, "one": true, "two": true, "few": true, "many": true, "other": true}
+
+// formsOf is every plural form locale's rule picks, found by asking it.
+func (p *Plugin) formsOf(locale string) map[string]bool {
+	forms := make(map[string]bool)
+	for n := range 1000 {
+		forms[p.form(locale, n)] = true
+	}
+	return forms
+}
+
+// needs reports whether locale's catalog should have key. A plural form its
+// rule never picks it does not: English has no "few" to translate. "zero" is
+// the catalog's choice, not the language's, and is always needed.
+func (p *Plugin) needs(locale, key string, forms map[string]bool) bool {
+	i := strings.LastIndexByte(key, '.')
+	if i < 0 {
+		return true
+	}
+	form := key[i+1:]
+	if !pluralForms[form] || form == "zero" || form == "other" || forms[form] {
+		return true
+	}
+	for _, catalog := range p.catalogs {
+		if _, plural := catalog[key[:i]+".other"]; plural {
+			return false
+		}
+	}
+	return true
 }
 
 // missingKey is where a render records the keys it could not find, for
@@ -247,9 +331,20 @@ func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) 
 // locale's lacks, which a page falls back to the default language for.
 func (p *Plugin) OnBuildFinished(_ context.Context, ev *collage.BuildFinishedEvent) error {
 	for _, g := range p.untranslated() {
-		ev.Warn("", "untranslated", fmt.Sprintf("%q has no %s translation; the %s text is shown", g.key, g.locale, p.defaultLocale))
+		ev.Warn("", "untranslated", fmt.Sprintf("%q has no %s translation; %s", g.key, g.locale, p.shownInstead(g)))
 	}
 	return nil
+}
+
+// shownInstead says what a page shows for a key its locale lacks.
+func (p *Plugin) shownInstead(g gap) string {
+	p.mu.RLock()
+	_, fallback := p.catalogs[p.defaultLocale][g.key]
+	p.mu.RUnlock()
+	if g.locale != p.defaultLocale && fallback {
+		return "the " + p.defaultLocale + " text is shown"
+	}
+	return "the key itself is shown"
 }
 
 // T translates key in rc's locale, for a data handler: T(rc, "greeting", "name",
@@ -259,59 +354,65 @@ func T(rc *collage.RenderContext, key string, args ...any) string { // any: a va
 	if !ok {
 		return key
 	}
-	s, _ := p.translate(rc, key, args)
+	s, _ := p.translate(p.localeOf(rc), key, args, p.recorder(rc))
 	return s
 }
 
 // pluginKey is where OnBeforeRender leaves the plugin for T.
 const pluginKey = Name + ":plugin"
 
-func (p *Plugin) lookup(rc *collage.RenderContext, key string) (string, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	locale := p.defaultLocale
+// localeOf is the locale rc renders in.
+func (p *Plugin) localeOf(rc *collage.RenderContext) string {
 	if rc != nil && rc.Locale != "" {
-		locale = rc.Locale
+		return rc.Locale
 	}
-	if s, ok := p.catalogs[locale][key]; ok {
-		return s, true
-	}
-	if s, ok := p.catalogs[p.defaultLocale][key]; ok {
-		p.record(rc, key+" ("+locale+", shown in "+p.defaultLocale+")")
-		return s, true
-	}
-	p.record(rc, key)
-	return key, false
+	return p.defaultLocale
 }
 
-func (p *Plugin) record(rc *collage.RenderContext, key string) {
-	if rc == nil {
-		return
+// lookup finds key in locale's catalog, then the default locale's, and tells miss
+// what it could not find there: the key, or the key and the locale it was shown in.
+// miss is called with the lock released: a Translator's takes it again.
+func (p *Plugin) lookup(locale, key string, miss func(string)) string {
+	p.mu.RLock()
+	s, ok := p.catalogs[locale][key]
+	fallback, inDefault := p.catalogs[p.defaultLocale][key]
+	p.mu.RUnlock()
+	switch {
+	case ok:
+		return s
+	case inDefault:
+		miss(key + " (" + locale + ", shown in " + p.defaultLocale + ")")
+		return fallback
 	}
-	if set, ok := collage.Get[*missingSet](rc, missingKey); ok {
-		set.mu.Lock()
-		set.keys[key] = true
-		set.mu.Unlock()
+	miss(key)
+	return key
+}
+
+// recorder is where a render's misses go: the page's findings.
+func (p *Plugin) recorder(rc *collage.RenderContext) func(string) {
+	return func(key string) {
+		if rc == nil {
+			return
+		}
+		if set, ok := collage.Get[*missingSet](rc, missingKey); ok {
+			set.mu.Lock()
+			set.keys[key] = true
+			set.mu.Unlock()
+		}
 	}
 }
 
-func (p *Plugin) translate(rc *collage.RenderContext, key string, args []any) (string, error) { // any: as in T
-	s, _ := p.lookup(rc, key)
-	return fill(s, args, func(v string) string { return v })
+func (p *Plugin) translate(locale, key string, args []any, miss func(string)) (string, error) { // any: as in T
+	return fill(p.lookup(locale, key, miss), args, func(v string) string { return v })
 }
 
-func (p *Plugin) translateHTML(rc *collage.RenderContext, key string, args []any) (template.HTML, error) { // any: as in T
-	s, _ := p.lookup(rc, key)
+func (p *Plugin) translateHTML(locale, key string, args []any, miss func(string)) (template.HTML, error) { // any: as in T
 	// The catalog's markup is trusted, as a template is; what fills it is not.
-	filled, err := fill(s, args, html.EscapeString)
+	filled, err := fill(p.lookup(locale, key, miss), args, html.EscapeString)
 	return template.HTML(filled), err // the catalog's own markup, with its arguments escaped
 }
 
-func (p *Plugin) plural(rc *collage.RenderContext, key string, n int, args []any) (string, error) { // any: as in T
-	locale := p.defaultLocale
-	if rc != nil && rc.Locale != "" {
-		locale = rc.Locale
-	}
+func (p *Plugin) plural(locale, key string, n int, args []any, miss func(string)) (string, error) { // any: as in T
 	form := p.form(locale, n)
 	p.mu.RLock()
 	_, has := p.catalogs[locale][key+"."+form]
@@ -328,7 +429,7 @@ func (p *Plugin) plural(rc *collage.RenderContext, key string, n int, args []any
 			form = "zero"
 		}
 	}
-	s, _ := p.lookup(rc, key+"."+form)
+	s := p.lookup(locale, key+"."+form, miss)
 	return fill(s, append([]any{"count", n}, args...), func(v string) string { return v }) // any: as in T
 }
 

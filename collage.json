@@ -48,6 +48,10 @@
       "dir": {
         "type": "string",
         "description": "Dir is the directory of the catalogs within FS. Default \"locales\"."
+      },
+      "strict": {
+        "type": "boolean",
+        "description": "Strict refuses to start while the catalogs differ: a key one locale has and another lacks. Without it the difference is logged at startup and listed in a static build's report, and the page falls back to the default locale's text, or to the key itself."
       }
     },
     "additionalProperties": false
