@@ -49,6 +49,7 @@
         "type": "string",
         "description": "Dir is the directory of the catalogs within FS. Default \"locales\"."
       }
-    }
+    },
+    "additionalProperties": false
   }
 }
