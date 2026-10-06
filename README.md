@@ -138,6 +138,12 @@ shows on the next reload.
 
 ## Changes
 
+### v0.2.2
+
+- Requires collage v0.49.0. Tests only: the test site gives its fragments
+  typed data with `collage.Load` and `collage.DataHandler`, since
+  `WithDataHandler` is gone. The plugin itself is unchanged.
+
 ### v0.2.0
 
 - `Plugin.In(locale)` returns a `Translator`: `T`, `TN`, `TH` and `Funcs` outside a

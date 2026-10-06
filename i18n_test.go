@@ -37,9 +37,9 @@ func site(t *testing.T, dev bool, fsys fstest.MapFS) *collage.App {
 	if err != nil {
 		t.Fatal(err)
 	}
-	frag := collage.NewFragment("p", "p.html").WithDataHandler(func(_ context.Context, rc *collage.RenderContext) (any, []string, error) {
-		return i18n.T(rc, "nav.home") + " & Ada", nil, nil
-	}).Static().Build() // reads only the locale, so a build writes it
+	frag := collage.NewFragment("p", "p.html").WithData(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
+		return i18n.T(rc, "nav.home") + " & Ada", nil
+	})).Static().Build() // reads only the locale, so a build writes it
 	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").WithPath("tr", "/").Build()); err != nil {
 		t.Fatal(err)
 	}

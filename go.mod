@@ -8,4 +8,4 @@ module github.com/Elagoht/collage-i18n
 
 go 1.26
 
-require github.com/Elagoht/collage v0.39.0
+require github.com/Elagoht/collage v0.49.0
