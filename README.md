@@ -14,7 +14,7 @@ app, err := collage.New(&collage.Config{
 })
 ```
 
-Requires collage v0.22.0 or later. Register it in `Config.Plugins`: it adds
+Requires collage v0.50.0 or later. Register it in `Config.Plugins`: it adds
 template functions, which only a plugin registered there can.
 
 collage already routes every request to a locale — by the path's prefix, the
@@ -137,6 +137,13 @@ shows on the next reload.
 ```
 
 ## Changes
+
+### v0.2.4
+
+- v0.2.3 was tagged at v0.2.2's commit by mistake and is retracted.
+- Requires collage v0.50.0. The plugin and a render's missing keys are kept
+  under typed keys, read in `OnAfterRender` with `In(ev.Values)`; the
+  configuration is read with `collage.PluginConfig`.
 
 ### v0.2.2
 

@@ -90,12 +90,13 @@ type Plugin struct {
 func New(opts Options) *Plugin { return &Plugin{opts: opts} }
 
 func (p *Plugin) Name() string                   { return Name }
-func (p *Plugin) Version() string                { return "0.2.2" }
+func (p *Plugin) Version() string                { return "0.2.4" }
 func (p *Plugin) Shutdown(context.Context) error { return nil }
 
 // Configure adds {{t}}, {{tn}} and {{th}}.
 func (p *Plugin) Configure(_ context.Context, host collage.ConfigHost) error {
-	if err := host.Config(&p.opts); err != nil {
+	var err error
+	if p.opts, err = collage.PluginConfig(host, p.opts); err != nil {
 		return err
 	}
 	p.dev = host.DevMode()
@@ -155,7 +156,7 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 	}
 	// Leave the plugin in every request's context, so T reaches it in an action
 	// too. An action runs before any render, so OnBeforeRender has not left the
-	// plugin in the render's shared data yet; a flash message or a validation
+	// plugin in the render's values yet; a flash message or a validation
 	// message translated in the action handler would otherwise read back the key.
 	return host.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -166,7 +167,7 @@ func (p *Plugin) Init(_ context.Context, host collage.Host) error {
 
 // ctxPluginKey is where Init's middleware leaves the plugin in the request
 // context, for T to find in an action — the counterpart to pluginKey, which
-// OnBeforeRender leaves in a render's shared data.
+// OnBeforeRender leaves in a render's values.
 type ctxPluginKey struct{}
 
 // strictError lists what the catalogs differ by, the first twenty of it.
@@ -296,7 +297,7 @@ func (p *Plugin) needs(locale, key string, forms map[string]bool) bool {
 
 // missingKey is where a render records the keys it could not find, for
 // OnAfterRender to report.
-const missingKey = Name + ":missing"
+var missingKey = collage.NewKey[*missingSet](Name + ":missing")
 
 type missingSet struct {
 	mu   sync.Mutex
@@ -316,16 +317,16 @@ func (p *Plugin) OnBeforeRender(_ context.Context, ev *collage.BeforeRenderEvent
 		}
 	}
 	if ev.Context != nil {
-		ev.Context.Set(missingKey, &missingSet{keys: make(map[string]bool)})
-		ev.Context.Set(pluginKey, p)
+		missingKey.Set(ev.Context, &missingSet{keys: make(map[string]bool)})
+		pluginKey.Set(ev.Context, p)
 	}
 	return nil
 }
 
 // OnAfterRender reports the keys the page asked for and no catalog had.
 func (p *Plugin) OnAfterRender(_ context.Context, ev *collage.AfterRenderEvent) error {
-	set, ok := ev.Data[missingKey].(*missingSet)
-	if !ok {
+	set, ok := missingKey.In(ev.Values)
+	if !ok || set == nil {
 		return nil
 	}
 	set.mu.Lock()
@@ -364,9 +365,9 @@ func (p *Plugin) shownInstead(g gap) string {
 // T translates key in rc's locale, for a data handler: T(rc, "greeting", "name",
 // user.Name). Its arguments are name and value pairs filling {name} in the text.
 func T(rc *collage.RenderContext, key string, args ...any) string { // any: a value is printed as fmt prints it
-	p, ok := collage.Get[*Plugin](rc, pluginKey)
+	p, ok := pluginKey.Get(rc)
 	if !ok {
-		// No render left the plugin in the shared data: an action, which runs
+		// No render left the plugin in the render's values: an action, which runs
 		// before any render. Init's middleware left it in the request context.
 		p, ok = pluginFromRequest(rc)
 	}
@@ -389,7 +390,7 @@ func pluginFromRequest(rc *collage.RenderContext) (*Plugin, bool) {
 }
 
 // pluginKey is where OnBeforeRender leaves the plugin for T.
-const pluginKey = Name + ":plugin"
+var pluginKey = collage.NewKey[*Plugin](Name + ":plugin")
 
 // localeOf is the locale rc renders in.
 func (p *Plugin) localeOf(rc *collage.RenderContext) string {
@@ -424,7 +425,7 @@ func (p *Plugin) recorder(rc *collage.RenderContext) func(string) {
 		if rc == nil {
 			return
 		}
-		if set, ok := collage.Get[*missingSet](rc, missingKey); ok {
+		if set, ok := missingKey.Get(rc); ok && set != nil {
 			set.mu.Lock()
 			set.keys[key] = true
 			set.mu.Unlock()

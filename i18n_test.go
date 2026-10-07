@@ -120,7 +120,7 @@ func TestEveryLocaleNeedsACatalog(t *testing.T) {
 
 // TestT_TranslatesInAnAction pins framework-issue 002: i18n.T must translate in an
 // action handler, not return the key. An action runs before any render, so the
-// plugin is not in the render's shared data; Init's middleware leaves it in the
+// plugin is not in the render's values; Init's middleware leaves it in the
 // request context, where T now also looks.
 func TestT_TranslatesInAnAction(t *testing.T) {
 	app, err := collage.New(&collage.Config{
