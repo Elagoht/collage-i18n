@@ -8,6 +8,6 @@ module github.com/Elagoht/collage-i18n
 
 go 1.26
 
-require github.com/Elagoht/collage v0.61.2
+require github.com/Elagoht/collage v0.61.4
 
 retract v0.2.3 // tagged at v0.2.2's commit by mistake
