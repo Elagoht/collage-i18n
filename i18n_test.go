@@ -83,7 +83,7 @@ func TestTranslatesInTheRendersLocale(t *testing.T) {
 func TestMissingTranslationsAreReported(t *testing.T) {
 	dev := site(t, true, catalogs)
 	body := get(dev, "/tr")
-	for _, want := range []string{"missing-translation", "nowhere", "only.english (tr, shown in en)"} {
+	for _, want := range []string{"i18n-missing", "nowhere", "only.english (tr, shown in en)"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("overlay lacks %q", want)
 		}
@@ -98,7 +98,7 @@ func TestMissingTranslationsAreReported(t *testing.T) {
 		rules = append(rules, f.Rule+":"+f.Path+":"+f.Message)
 	}
 	joined := strings.Join(rules, "\n")
-	for _, want := range []string{"missing-translation:/:nowhere", `untranslated::"only.english" has no tr translation`, `untranslated::"cart.zero" has no tr translation`} {
+	for _, want := range []string{"i18n-missing:/:nowhere", `i18n-untranslated::"only.english" has no tr translation`, `i18n-untranslated::"cart.zero" has no tr translation`} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("build findings lack %s:\n%s", want, joined)
 		}

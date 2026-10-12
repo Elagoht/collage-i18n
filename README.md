@@ -14,7 +14,7 @@ app, err := collage.New(&collage.Config{
 })
 ```
 
-Requires collage v0.50.0 or later. Register it in `Config.Plugins`: it adds
+Requires collage v0.61.0 or later. Register it in `Config.Plugins`: it adds
 template functions, which only a plugin registered there can.
 
 collage already routes every request to a locale — by the path's prefix, the
@@ -45,7 +45,8 @@ The application does not start while a supported locale has no catalog.
 <p>{{th "welcome" "name" .User.Name}}</p>
 ```
 
-- `t` translates a key; name and value pairs fill `{name}`. The result is text,
+- `t` translates a key; name and value pairs fill `{name}`. A value may be a
+  number or anything else a template has; it is printed. The result is text,
   escaped like anything else.
 - `tn` picks a plural form of the key for a count — `zero` when the catalog has one
   and the count is 0, `one`, `other` — and fills `{count}`.
@@ -64,6 +65,9 @@ anywhere collage hands you a `RenderContext`, in the request's locale:
 ```go
 title := i18n.T(rc, "post.title", "name", post.Title)
 ```
+
+The pairs are strings: format a number yourself (`strconv.Itoa(n)`), and use a
+plural key with `{{tn}}` or `Translator.TN` for a count.
 
 In an action, this is how a flash message or a validation message is translated
 before the handler answers — `.Required().Message(i18n.T(rc, "signup.email.required"))`.
@@ -106,9 +110,9 @@ before the start translates every key to itself, and logs that it did.
 A key the page's locale lacks falls back to the default locale's text, then to the
 key itself. Either way it is reported:
 
-- **in development**, over the page, as `missing-translation`;
+- **in development**, over the page, as `i18n-missing`;
 - **in a static build**, under the page, and every key one catalog has and another
-  lacks is listed as `untranslated`, in either direction: a key only the Turkish
+  lacks is listed as `i18n-untranslated`, in either direction: a key only the Turkish
   catalog has leaves the English pages showing the key itself;
 - **at startup**, the untranslated keys are logged.
 
@@ -137,6 +141,18 @@ shows on the next reload.
 ```
 
 ## Changes
+
+### Changed in v0.3.0
+
+- `i18n.T`, `Translator.T`, `Translator.TH` and `Translator.TN` take their
+  name and value pairs as `...string` instead of `...any`: write
+  `i18n.T(rc, "visits", "n", strconv.Itoa(n))`, or use a plural key with `TN`
+  for a count. The template functions `{{t}}`, `{{th}}` and `{{tn}}` still take
+  any value and print it.
+- Finding rule codes: `missing-translation` → `i18n-missing`, `untranslated` →
+  `i18n-untranslated`.
+- collage.json has a setup note: the catalogs come from `Options.FS`.
+- Requires collage v0.61.0.
 
 ### v0.2.4
 

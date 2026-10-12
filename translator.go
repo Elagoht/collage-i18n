@@ -1,6 +1,7 @@
 package i18n
 
 import (
+	"html"
 	"html/template"
 	"log/slog"
 	"slices"
@@ -37,20 +38,20 @@ func (t Translator) Locale() string {
 
 // T translates key, as {{t}} does; its arguments are name and value pairs
 // filling {name}.
-func (t Translator) T(key string, args ...any) string { // any: a value is printed as fmt prints it
+func (t Translator) T(key string, args ...string) string {
 	s, _ := t.p.translate(t.Locale(), key, args, t.miss())
 	return s
 }
 
 // TN translates the plural form of key for n, as {{tn}} does, filling {count}.
-func (t Translator) TN(key string, n int, args ...any) string { // any: as in T
+func (t Translator) TN(key string, n int, args ...string) string {
 	s, _ := t.p.plural(t.Locale(), key, n, args, t.miss())
 	return s
 }
 
 // TH translates a key holding markup, as {{th}} does: the catalog's markup is
 // kept and what fills it is escaped.
-func (t Translator) TH(key string, args ...any) template.HTML { // any: as in T
+func (t Translator) TH(key string, args ...string) template.HTML {
 	s, _ := t.p.translateHTML(t.Locale(), key, args, t.miss())
 	return s
 }
@@ -61,13 +62,25 @@ func (t Translator) TH(key string, args ...any) template.HTML { // any: as in T
 func (t Translator) Funcs() template.FuncMap {
 	return template.FuncMap{
 		"t": func(key string, args ...any) (string, error) { // any: a template passes what it has
-			return t.p.translate(t.Locale(), key, args, t.miss())
+			pairs, err := templateArgs(args)
+			if err != nil {
+				return key, err
+			}
+			return t.p.translate(t.Locale(), key, pairs, t.miss())
 		},
 		"tn": func(key string, n int, args ...any) (string, error) { // any: as above
-			return t.p.plural(t.Locale(), key, n, args, t.miss())
+			pairs, err := templateArgs(args)
+			if err != nil {
+				return key, err
+			}
+			return t.p.plural(t.Locale(), key, n, pairs, t.miss())
 		},
 		"th": func(key string, args ...any) (template.HTML, error) { // any: as above
-			return t.p.translateHTML(t.Locale(), key, args, t.miss())
+			pairs, err := templateArgs(args)
+			if err != nil {
+				return template.HTML(html.EscapeString(key)), err
+			}
+			return t.p.translateHTML(t.Locale(), key, pairs, t.miss())
 		},
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	i18n "github.com/Elagoht/collage-i18n"
 	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/pkg/collagetest"
 )
 
 // logs is a slog handler's output, safe to read while the app writes to it.
@@ -37,21 +38,14 @@ func started(t *testing.T, opts i18n.Options) (*i18n.Plugin, *logs, error) {
 	t.Helper()
 	out := &logs{}
 	plugin := i18n.New(opts)
-	app, err := collage.New(&collage.Config{
-		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(`<p>{{t "nav.home"}}</p>`)}}, Root: "t"},
-		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
-		Plugins:  []collage.Plugin{plugin},
-		Logger:   slog.New(slog.NewTextHandler(out, nil)),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	frag := collage.NewFragment("p", "p.html").Build()
-	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").Build()); err != nil {
-		t.Fatal(err)
-	}
-	return plugin, out, app.Start()
+	_, err := collagetest.TrySite(t,
+		collagetest.WithPlugins(plugin),
+		collagetest.WithTemplates(map[string]string{"home.html": `<p>{{t "nav.home"}}</p>`}),
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.Locale = collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}}
+			c.Logger = slog.New(slog.NewTextHandler(out, nil))
+		}))
+	return plugin, out, err
 }
 
 func TestTranslatesOutsideARender(t *testing.T) {
@@ -97,12 +91,13 @@ func TestFuncsForTheApplicationsOwnTemplates(t *testing.T) {
 		t.Fatal(err)
 	}
 	tmpl := template.Must(template.New("mail").Funcs(plugin.In("tr").Funcs()).Parse(
-		`{{t "greeting" "name" .}} {{tn "cart" 1}} {{th "rich" "name" .}}`))
+		`{{t "greeting" "name" .}} {{tn "cart" 1}} {{th "rich" "name" .}} {{t "greeting" "name" 42}}`))
 	var out strings.Builder
 	if err := tmpl.Execute(&out, "Şule"); err != nil {
 		t.Fatal(err)
 	}
-	if want := "Merhaba, Şule! 1 ürün <strong>Şule</strong> katıldı"; out.String() != want {
+	// A template passes what it has, a number too; it is printed.
+	if want := "Merhaba, Şule! 1 ürün <strong>Şule</strong> katıldı Merhaba, 42!"; out.String() != want {
 		t.Errorf("got %q, want %q", out.String(), want)
 	}
 
@@ -223,5 +218,13 @@ func TestAPluralFormALocaleNeverUsesIsNoGap(t *testing.T) {
 	}
 	if _, _, err := started(t, i18n.Options{FS: fsys, Strict: true, Plural: plural}); err != nil {
 		t.Errorf("a form en never uses was taken for a gap: %v", err)
+	}
+}
+
+// Without a filesystem the plugin cannot start, and says what to give it; the
+// manifest's setup note says the same.
+func TestNeedsAnFS(t *testing.T) {
+	if _, _, err := started(t, i18n.Options{}); err == nil || !strings.Contains(err.Error(), "i18n: Options.FS is required") {
+		t.Errorf("start = %v, want the FS error", err)
 	}
 }

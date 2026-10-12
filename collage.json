@@ -3,6 +3,7 @@
   "name": "elagoht/i18n",
   "description": "A collage plugin for translations.",
   "repository": "https://github.com/Elagoht/collage-i18n",
+  "setup": "Catalogs are read from an `fs.FS`: embed them (`//go:embed locales`) and give them to `i18n.New(i18n.Options{FS: locales})` in `plugins.go`; set `\"dir\"` when they are not in `locales/`. Without `FS` the application does not start, and every supported locale needs a catalog.",
   "templateFunctions": [
     {
       "name": "t",
