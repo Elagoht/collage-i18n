@@ -89,11 +89,7 @@ func TestMissingTranslationsAreReported(t *testing.T) {
 		}
 	}
 
-	builder, err := collage.NewBuilder(site(t, false, catalogs), collage.BuildOptions{OutDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	report, err := builder.Build(context.Background())
+	report, err := collage.Build(context.Background(), site(t, false, catalogs), collage.BuildOptions{OutDir: t.TempDir()})
 	if err != nil && !errors.Is(err, collage.ErrBuildFindings) {
 		t.Fatal(err)
 	}
@@ -138,7 +134,7 @@ func TestT_TranslatesInAnAction(t *testing.T) {
 	act := collage.NewAction("a").WithPath("tr", "/a").WithMethods(http.MethodPost).WithoutCSRF().
 		WithHandler(func(_ context.Context, rc *collage.RenderContext) (*collage.ActionResult, error) {
 			inAction = i18n.T(rc, "nav.home")
-			return collage.NoContent(http.StatusNoContent), nil
+			return collage.Status(http.StatusNoContent), nil
 		}).Build()
 	if err := app.RegisterAction(act); err != nil {
 		t.Fatalf("RegisterAction: %v", err)
