@@ -11,6 +11,7 @@ import (
 
 	i18n "github.com/Elagoht/collage-i18n"
 	"github.com/Elagoht/collage/pkg/collage"
+	"github.com/Elagoht/collage/pkg/collagetest"
 )
 
 var catalogs = fstest.MapFS{
@@ -27,23 +28,19 @@ const page = `<nav>{{t "nav.home"}}</nav><p>{{t "greeting" "name" .}}</p>` +
 
 func site(t *testing.T, dev bool, fsys fstest.MapFS) *collage.App {
 	t.Helper()
-	app, err := collage.New(&collage.Config{
-		DevMode:  dev,
-		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
-		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(page)}}, Root: "t"},
-		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
-		Plugins:  []collage.Plugin{i18n.New(i18n.Options{FS: fsys})},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
 	frag := collage.NewFragment("p", "p.html").WithData(collage.Load(func(_ context.Context, rc *collage.RenderContext) (string, error) {
 		return i18n.T(rc, "nav.home") + " & Ada", nil
 	})).Static().Build() // reads only the locale, so a build writes it
-	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").WithPath("tr", "/").Build()); err != nil {
-		t.Fatal(err)
-	}
-	return app
+	return collagetest.NewSite(t,
+		collagetest.WithPlugins(i18n.New(i18n.Options{FS: fsys})),
+		collagetest.WithTemplates(map[string]string{"p.html": page}),
+		collagetest.WithConfig(func(c *collage.Config) {
+			c.DevMode = dev
+			c.Locale = collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}}
+		}),
+		collagetest.WithoutHome(),
+		collagetest.WithRegister(collage.NewPage("home").WithContent(frag).WithPath("en", "/").WithPath("tr", "/").Build()),
+	).App
 }
 
 func get(app *collage.App, path string) string {
@@ -105,8 +102,29 @@ func TestMissingTranslationsAreReported(t *testing.T) {
 	}
 }
 
+// unstartedSite is hand-built, not a collagetest site: the test using it asserts
+// the 503 an app serves when a plugin's Init fails, which NewSite would turn
+// into a failed test.
+func unstartedSite(t *testing.T, fsys fstest.MapFS) *collage.App {
+	t.Helper()
+	app, err := collage.New(&collage.Config{
+		Server:   collage.ServerConfig{Host: "localhost", Port: 3000},
+		Template: collage.TemplateConfig{FS: fstest.MapFS{"t/p.html": {Data: []byte(page)}}, Root: "t"},
+		Locale:   collage.LocaleConfig{Default: "en", Supported: []string{"en", "tr"}},
+		Plugins:  []collage.Plugin{i18n.New(i18n.Options{FS: fsys})},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	frag := collage.NewFragment("p", "p.html").Static().Build()
+	if err := app.RegisterPage(collage.NewPage("home").WithContent(frag).WithPath("en", "/").WithPath("tr", "/").Build()); err != nil {
+		t.Fatal(err)
+	}
+	return app
+}
+
 func TestEveryLocaleNeedsACatalog(t *testing.T) {
-	app := site(t, false, fstest.MapFS{"locales/en.json": {Data: []byte(`{}`)}})
+	app := unstartedSite(t, fstest.MapFS{"locales/en.json": {Data: []byte(`{}`)}})
 	rec := httptest.NewRecorder()
 	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 	if rec.Code != http.StatusServiceUnavailable {
